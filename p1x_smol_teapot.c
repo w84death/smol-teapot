@@ -13,8 +13,9 @@
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define PROJECTION_DISTANCE 110
-#define FRAME_INTERVAL 60 // Limit frame rate to prevent freezing
+#define PROJECTION_DISTANCE 150
+#define FRAME_INTERVAL 50 // Increased to reduce processing load
+#define MAX_TRIANGLES_PER_FRAME 400 // Limit triangles processed per frame
 
 typedef struct {
     float x, y, z;
@@ -29,6 +30,7 @@ static Vec3f rotation = {0};
 static Vec3f position = {0, 0, 30}; // Moved camera farther back
 static float scale = 2.0f; // Smaller scale for the triangulated teapot
 static uint32_t last_frame_time = 0; // For frame rate limiting
+static int current_triangle_batch = 0; // For triangle batching
 
 // Function prototypes
 static void render_frame(Canvas* canvas);
@@ -68,7 +70,6 @@ static void render_callback(Canvas* canvas, void* ctx) {
 
     // Display controls
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 10, "Up/Dn/L/R: Rotate");
     canvas_draw_str(canvas, 2, 62, "Smol Teapot 3D");
     
     furi_mutex_release(state->mutex);
@@ -145,8 +146,23 @@ static void render_frame(Canvas* canvas) {
     rotate_y_matrix(&rot_y_matrix, rotation.y);
     rotate_z_matrix(&rot_z_matrix, rotation.z);
     
-    // Process each triangle in the model
-    for(int i = 0; i < TEAPOT_TRIANGLE_COUNT; i++) {
+    // Calculate the start and end indices for this batch of triangles
+    int start_triangle = current_triangle_batch * MAX_TRIANGLES_PER_FRAME;
+    int end_triangle = start_triangle + MAX_TRIANGLES_PER_FRAME;
+    
+    // Make sure we don't exceed the number of triangles
+    if(end_triangle > TEAPOT_TRIANGLE_COUNT) {
+        end_triangle = TEAPOT_TRIANGLE_COUNT;
+    }
+    
+    // Update the batch for the next frame
+    current_triangle_batch++;
+    if(current_triangle_batch * MAX_TRIANGLES_PER_FRAME >= TEAPOT_TRIANGLE_COUNT) {
+        current_triangle_batch = 0;
+    }
+    
+    // Process each triangle in the current batch
+    for(int i = start_triangle; i < end_triangle; i++) {
         // Extract the triangle vertices from the array
         Vec3f v1 = {
             teapot_triangles[i * 9 + 0],
@@ -212,12 +228,13 @@ static void render_frame(Canvas* canvas) {
         // Only render if facing camera (backface culling)
         if(dot < 0) {
             // Project the vertices to screen space
+            // Note: Inverting Y-axis by using negative value to fix upside-down camera
             int x1 = (int)((tv1.x * PROJECTION_DISTANCE) / tv1.z) + SCREEN_WIDTH/2;
-            int y1 = (int)((tv1.y * PROJECTION_DISTANCE) / tv1.z) + SCREEN_HEIGHT/2;
+            int y1 = (int)((-tv1.y * PROJECTION_DISTANCE) / tv1.z) + SCREEN_HEIGHT/2;
             int x2 = (int)((tv2.x * PROJECTION_DISTANCE) / tv2.z) + SCREEN_WIDTH/2;
-            int y2 = (int)((tv2.y * PROJECTION_DISTANCE) / tv2.z) + SCREEN_HEIGHT/2;
+            int y2 = (int)((-tv2.y * PROJECTION_DISTANCE) / tv2.z) + SCREEN_HEIGHT/2;
             int x3 = (int)((tv3.x * PROJECTION_DISTANCE) / tv3.z) + SCREEN_WIDTH/2;
-            int y3 = (int)((tv3.y * PROJECTION_DISTANCE) / tv3.z) + SCREEN_HEIGHT/2;
+            int y3 = (int)((-tv3.y * PROJECTION_DISTANCE) / tv3.z) + SCREEN_HEIGHT/2;
             
             // Check if any part of triangle is on screen
             if((x1 < 0 && x2 < 0 && x3 < 0) || 
@@ -257,6 +274,7 @@ int32_t p1x_smol_teapot_app(void* p) {
     
     // Initialize timing
     last_frame_time = furi_get_tick();
+    current_triangle_batch = 0;
     
     // Handle events
     InputEvent event;
@@ -276,19 +294,21 @@ int32_t p1x_smol_teapot_app(void* p) {
                 if(event.type == InputTypePress || event.type == InputTypeRepeat) {
                     switch(event.key) {
                         case InputKeyUp:
-                            rotation.x += 0.1f;
+                            rotation.x += 0.25f;
                             break;
                         case InputKeyDown:
-                            rotation.x -= 0.1f;
+                            rotation.x -= 0.25f;
                             break;
                         case InputKeyLeft:
-                            rotation.y -= 0.1f;
+                            rotation.y -= 0.25f;
                             break;
                         case InputKeyRight:
-                            rotation.y += 0.1f;
+                            rotation.y += 0.25f;
                             break;
                         case InputKeyOk:
-                            rotation.z += 0.1f;
+                            rotation.x = 0;
+                            rotation.y = 0;
+                            rotation.z = 0;
                             break;
                         case InputKeyBack:
                             running = false;
@@ -300,6 +320,11 @@ int32_t p1x_smol_teapot_app(void* p) {
                 
                 furi_mutex_release(state->mutex);
             }
+            
+            // Force redraw after input
+            if(event.type == InputTypePress || event.type == InputTypeRepeat) {
+                view_port_update(view_port);
+            }
         }
         
         // Update display at controlled frame rate
@@ -308,7 +333,7 @@ int32_t p1x_smol_teapot_app(void* p) {
             last_frame_time = current_time;
         } else {
             // Give some time back to the system
-            furi_delay_ms(5);
+            furi_delay_ms(10); // Increased delay for better system responsiveness
         }
     }
     
