@@ -13,9 +13,17 @@
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define PROJECTION_DISTANCE 150
-#define FRAME_INTERVAL 50 // Increased to reduce processing load
-#define MAX_TRIANGLES_PER_FRAME 400 // Limit triangles processed per frame
+#define PROJECTION_DISTANCE 110
+#define FRAME_INTERVAL 20
+#define MAX_TRIANGLES_PER_FRAME 200
+
+// Model bounds to find center
+#define MODEL_MIN_X -3.0f
+#define MODEL_MAX_X 3.0f
+#define MODEL_MIN_Y 0.0f  // Teapot sits on y=0 plane
+#define MODEL_MAX_Y 3.3f  // Approximate max height
+#define MODEL_MIN_Z -3.0f
+#define MODEL_MAX_Z 3.0f
 
 typedef struct {
     float x, y, z;
@@ -27,10 +35,17 @@ typedef struct {
 
 // Model state
 static Vec3f rotation = {0};
-static Vec3f position = {0, 0, 30}; // Moved camera farther back
-static float scale = 2.0f; // Smaller scale for the triangulated teapot
-static uint32_t last_frame_time = 0; // For frame rate limiting
-static int current_triangle_batch = 0; // For triangle batching
+static Vec3f position = {0, 0, 30};
+static float scale = 2.0f;
+static uint32_t last_frame_time = 0;
+static int current_triangle_batch = 0;
+
+// Model center pivot point
+static Vec3f model_center = {
+    (MODEL_MIN_X + MODEL_MAX_X) / 2.0f,
+    (MODEL_MIN_Y + MODEL_MAX_Y) / 2.0f,
+    (MODEL_MIN_Z + MODEL_MAX_Z) / 2.0f
+};
 
 // Function prototypes
 static void render_frame(Canvas* canvas);
@@ -181,6 +196,19 @@ static void render_frame(Canvas* canvas) {
             teapot_triangles[i * 9 + 7],
             teapot_triangles[i * 9 + 8]
         };
+        
+        // Center each vertex around the model's center point before rotation
+        v1.x -= model_center.x;
+        v1.y -= model_center.y;
+        v1.z -= model_center.z;
+        
+        v2.x -= model_center.x;
+        v2.y -= model_center.y;
+        v2.z -= model_center.z;
+        
+        v3.x -= model_center.x;
+        v3.y -= model_center.y;
+        v3.z -= model_center.z;
         
         // Transform vertices
         Vec3f tv1, tv2, tv3;
