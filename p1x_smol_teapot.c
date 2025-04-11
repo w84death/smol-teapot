@@ -302,7 +302,7 @@ static void render_frame(Canvas* canvas) {
         
         // Calculate dot product with camera direction 
         // Assuming camera is looking towards negative z
-        Vec3f camera_dir = {0, 0, -1};
+        Vec3f camera_dir = {0, 0, 1};
         float dot = dot_product(&normal, &camera_dir);
         
         // Backface culling - only render if facing camera
