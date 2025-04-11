@@ -13,15 +13,14 @@
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define PROJECTION_DISTANCE 110
-#define FRAME_INTERVAL 20
-#define MAX_TRIANGLES_PER_FRAME 200
+#define PROJECTION_DISTANCE 140
+#define FRAME_DELAY 50
 
 // Model bounds to find center
 #define MODEL_MIN_X -3.0f
 #define MODEL_MAX_X 3.0f
-#define MODEL_MIN_Y 0.0f  // Teapot sits on y=0 plane
-#define MODEL_MAX_Y 3.3f  // Approximate max height
+#define MODEL_MIN_Y 0.0f
+#define MODEL_MAX_Y 3.3f
 #define MODEL_MIN_Z -3.0f
 #define MODEL_MAX_Z 3.0f
 
@@ -35,10 +34,11 @@ typedef struct {
 
 // Model state
 static Vec3f rotation = {0};
+static Vec3f last_rotation = {0}; // Track last rotation state
 static Vec3f position = {0, 0, 30};
 static float scale = 2.0f;
-static uint32_t last_frame_time = 0;
-static int current_triangle_batch = 0;
+static bool render_complete = false;
+static bool render_needed = true;
 
 // Model center pivot point
 static Vec3f model_center = {
@@ -47,8 +47,17 @@ static Vec3f model_center = {
     (MODEL_MIN_Z + MODEL_MAX_Z) / 2.0f
 };
 
+// Render buffer to avoid direct drawing to screen
+typedef struct {
+    uint8_t* buffer;
+    uint16_t width;
+    uint16_t height;
+} RenderBuffer;
+
+static RenderBuffer render_buffer = {0};
+
 // Function prototypes
-static void render_frame(Canvas* canvas);
+static void render_complete_model(void);
 static void init_identity_matrix(Matrix4x4* m);
 static void rotate_x_matrix(Matrix4x4* m, float angle);
 static void rotate_y_matrix(Matrix4x4* m, float angle);
@@ -63,6 +72,33 @@ typedef struct {
     FuriMutex* mutex;
 } TeapotState;
 
+// Draw pixel to our buffer
+static void buffer_draw_pixel(uint8_t x, uint8_t y) {
+    if(x < render_buffer.width && y < render_buffer.height) {
+        uint16_t byte_idx = y * (render_buffer.width / 8) + (x / 8);
+        uint8_t bit_pos = x % 8;
+        render_buffer.buffer[byte_idx] |= (1 << bit_pos);
+    }
+}
+
+// Draw line to our buffer (Bresenham's line algorithm)
+static void buffer_draw_line(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
+    int dx = abs(x1 - x0);
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0);
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    int e2;
+    
+    while (true) {
+        buffer_draw_pixel(x0, y0);
+        if (x0 == x1 && y0 == y1) break;
+        e2 = 2 * err;
+        if (e2 >= dy) { if (x0 == x1) break; err += dy; x0 += sx; }
+        if (e2 <= dx) { if (y0 == y1) break; err += dx; y0 += sy; }
+    }
+}
+
 // Input callback function
 static void input_callback(InputEvent* input_event, void* ctx) {
     furi_assert(ctx);
@@ -70,24 +106,57 @@ static void input_callback(InputEvent* input_event, void* ctx) {
     furi_message_queue_put(event_queue, input_event, FuriWaitForever);
 }
 
-// Draw callback function
+// Draw callback function - copy our buffer to screen
 static void render_callback(Canvas* canvas, void* ctx) {
     furi_assert(ctx);
     TeapotState* state = ctx;
     
     if(furi_mutex_acquire(state->mutex, 100) != FuriStatusOk) return;
     
-    canvas_clear(canvas);
-    canvas_set_color(canvas, ColorBlack);
+    // Only render to screen if we have a buffer ready
+    if(render_buffer.buffer != NULL) {
+        canvas_draw_xbm(
+            canvas, 
+            0, 
+            0, 
+            render_buffer.width, 
+            render_buffer.height, 
+            render_buffer.buffer);
+    }
     
-    // Render our 3D scene
-    render_frame(canvas);
-
-    // Display controls
+    // Always display the controls text
+    canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 2, 62, "Smol Teapot 3D");
     
     furi_mutex_release(state->mutex);
+}
+
+// Create and initialize render buffer
+static void init_render_buffer() {
+    render_buffer.width = SCREEN_WIDTH;
+    render_buffer.height = SCREEN_HEIGHT;
+    size_t buffer_size = (render_buffer.width / 8) * render_buffer.height;
+    render_buffer.buffer = malloc(buffer_size);
+    if(render_buffer.buffer) {
+        memset(render_buffer.buffer, 0, buffer_size);
+    }
+}
+
+// Clear render buffer
+static void clear_render_buffer() {
+    if(render_buffer.buffer) {
+        size_t buffer_size = (render_buffer.width / 8) * render_buffer.height;
+        memset(render_buffer.buffer, 0, buffer_size);
+    }
+}
+
+// Free render buffer
+static void free_render_buffer() {
+    if(render_buffer.buffer) {
+        free(render_buffer.buffer);
+        render_buffer.buffer = NULL;
+    }
 }
 
 // Simple 3D math functions
@@ -149,7 +218,10 @@ static void subtract_vectors(Vec3f* v1, Vec3f* v2, Vec3f* result) {
     result->z = v1->z - v2->z;
 }
 
-static void render_frame(Canvas* canvas) {
+static void render_complete_model() {
+    // Clear buffer before new render
+    clear_render_buffer();
+    
     // Create rotation matrices
     Matrix4x4 rot_x_matrix, rot_y_matrix, rot_z_matrix;
     
@@ -161,23 +233,8 @@ static void render_frame(Canvas* canvas) {
     rotate_y_matrix(&rot_y_matrix, rotation.y);
     rotate_z_matrix(&rot_z_matrix, rotation.z);
     
-    // Calculate the start and end indices for this batch of triangles
-    int start_triangle = current_triangle_batch * MAX_TRIANGLES_PER_FRAME;
-    int end_triangle = start_triangle + MAX_TRIANGLES_PER_FRAME;
-    
-    // Make sure we don't exceed the number of triangles
-    if(end_triangle > TEAPOT_TRIANGLE_COUNT) {
-        end_triangle = TEAPOT_TRIANGLE_COUNT;
-    }
-    
-    // Update the batch for the next frame
-    current_triangle_batch++;
-    if(current_triangle_batch * MAX_TRIANGLES_PER_FRAME >= TEAPOT_TRIANGLE_COUNT) {
-        current_triangle_batch = 0;
-    }
-    
-    // Process each triangle in the current batch
-    for(int i = start_triangle; i < end_triangle; i++) {
+    // Process all triangles
+    for(int i = 0; i < TEAPOT_TRIANGLE_COUNT; i++) {
         // Extract the triangle vertices from the array
         Vec3f v1 = {
             teapot_triangles[i * 9 + 0],
@@ -256,7 +313,6 @@ static void render_frame(Canvas* canvas) {
         // Only render if facing camera (backface culling)
         if(dot < 0) {
             // Project the vertices to screen space
-            // Note: Inverting Y-axis by using negative value to fix upside-down camera
             int x1 = (int)((tv1.x * PROJECTION_DISTANCE) / tv1.z) + SCREEN_WIDTH/2;
             int y1 = (int)((-tv1.y * PROJECTION_DISTANCE) / tv1.z) + SCREEN_HEIGHT/2;
             int x2 = (int)((tv2.x * PROJECTION_DISTANCE) / tv2.z) + SCREEN_WIDTH/2;
@@ -266,18 +322,25 @@ static void render_frame(Canvas* canvas) {
             
             // Check if any part of triangle is on screen
             if((x1 < 0 && x2 < 0 && x3 < 0) || 
-               (x1 > SCREEN_WIDTH && x2 > SCREEN_WIDTH && x3 > SCREEN_WIDTH) ||
+               (x1 >= SCREEN_WIDTH && x2 >= SCREEN_WIDTH && x3 >= SCREEN_WIDTH) ||
                (y1 < 0 && y2 < 0 && y3 < 0) || 
-               (y1 > SCREEN_HEIGHT && y2 > SCREEN_HEIGHT && y3 > SCREEN_HEIGHT)) {
+               (y1 >= SCREEN_HEIGHT && y2 >= SCREEN_HEIGHT && y3 >= SCREEN_HEIGHT)) {
                 continue;
             }
             
-            // Draw wireframe triangle
-            canvas_draw_line(canvas, x1, y1, x2, y2);
-            canvas_draw_line(canvas, x2, y2, x3, y3);
-            canvas_draw_line(canvas, x3, y3, x1, y1);
+            // Draw wireframe triangle to our buffer
+            buffer_draw_line(x1, y1, x2, y2);
+            buffer_draw_line(x2, y2, x3, y3);
+            buffer_draw_line(x3, y3, x1, y1);
         }
     }
+    
+    // Signal that render is complete
+    render_complete = true;
+    render_needed = false;
+    
+    // Remember last rotation state
+    last_rotation = rotation;
 }
 
 int32_t p1x_smol_teapot_app(void* p) {
@@ -291,30 +354,35 @@ int32_t p1x_smol_teapot_app(void* p) {
     TeapotState* state = malloc(sizeof(TeapotState));
     state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     
+    // Initialize render buffer
+    init_render_buffer();
+    
     // Set up viewport
     ViewPort* view_port = view_port_alloc();
     view_port_draw_callback_set(view_port, render_callback, state);
     view_port_input_callback_set(view_port, input_callback, event_queue);
     
+    // Prevent GUI from auto-clearing the screen
+    view_port_set_orientation(view_port, ViewPortOrientationHorizontal);
+    
     // Register viewport with GUI
     Gui* gui = furi_record_open(RECORD_GUI);
     gui_add_view_port(gui, view_port, GuiLayerFullscreen);
     
-    // Initialize timing
-    last_frame_time = furi_get_tick();
-    current_triangle_batch = 0;
+    // Initialize values
+    render_needed = true;
+    render_complete = false;
+    
+    // First render of the model
+    render_complete_model();
     
     // Handle events
     InputEvent event;
     bool running = true;
     
     while(running) {
-        // Rate limit updates to prevent freezing
-        uint32_t current_time = furi_get_tick();
-        bool frame_ready = (current_time - last_frame_time >= FRAME_INTERVAL);
-        
-        // Process input with timeout
-        FuriStatus event_status = furi_message_queue_get(event_queue, &event, frame_ready ? 0 : FRAME_INTERVAL);
+        // Process input with timeout (non-blocking)
+        FuriStatus event_status = furi_message_queue_get(event_queue, &event, 0);
         
         if(event_status == FuriStatusOk) {
             if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
@@ -323,20 +391,25 @@ int32_t p1x_smol_teapot_app(void* p) {
                     switch(event.key) {
                         case InputKeyUp:
                             rotation.x += 0.25f;
+                            render_needed = true;
                             break;
                         case InputKeyDown:
                             rotation.x -= 0.25f;
+                            render_needed = true;
                             break;
                         case InputKeyLeft:
                             rotation.y -= 0.25f;
+                            render_needed = true;
                             break;
                         case InputKeyRight:
                             rotation.y += 0.25f;
+                            render_needed = true;
                             break;
                         case InputKeyOk:
                             rotation.x = 0;
                             rotation.y = 0;
                             rotation.z = 0;
+                            render_needed = true;
                             break;
                         case InputKeyBack:
                             running = false;
@@ -348,21 +421,19 @@ int32_t p1x_smol_teapot_app(void* p) {
                 
                 furi_mutex_release(state->mutex);
             }
-            
-            // Force redraw after input
-            if(event.type == InputTypePress || event.type == InputTypeRepeat) {
-                view_port_update(view_port);
-            }
         }
         
-        // Update display at controlled frame rate
-        if(frame_ready) {
+        // Check if we need to render a new frame
+        if(render_needed) {
+            // Render in our own buffer
+            render_complete_model();
+            
+            // Update the display once per full model render
             view_port_update(view_port);
-            last_frame_time = current_time;
-        } else {
-            // Give some time back to the system
-            furi_delay_ms(10); // Increased delay for better system responsiveness
         }
+        
+        // Simple frame delay
+        furi_delay_ms(FRAME_DELAY);
     }
     
     // Clean up
@@ -372,6 +443,7 @@ int32_t p1x_smol_teapot_app(void* p) {
     view_port_free(view_port);
     furi_message_queue_free(event_queue);
     furi_mutex_free(state->mutex);
+    free_render_buffer();
     free(state);
     
     return 0;
