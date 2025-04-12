@@ -64,11 +64,3 @@ This application demonstrates several interesting techniques:
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-*"A programmer started to cuss  
-Because getting to sleep was a fuss  
-As he lay there in bed  
-Looping 'round in his head  
-was: while(!asleep()) sheep++;"*
