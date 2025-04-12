@@ -13,7 +13,7 @@
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define PROJECTION_DISTANCE 140
+#define PROJECTION_DISTANCE 190
 #define FRAME_DELAY 33
 
 // Model bounds to find center
@@ -66,6 +66,7 @@ typedef struct {
     bool auto_rotate;    // Flag to enable auto-rotation
     float auto_rotate_speed;  // Speed of auto-rotation
     uint8_t rotate_axis;     // 0=X, 1=Y, 2=Z
+    bool show_title_screen; // Flag to show title screen instead of 3D teapot
 } TeapotState;
 
 // Function prototypes
@@ -131,26 +132,42 @@ static void render_callback(Canvas* canvas, void* ctx) {
             render_buffer.buffer);
     }
     
-    // Always display the controls text
-    canvas_set_color(canvas, ColorBlack);
-    canvas_set_font(canvas, FontPrimary);
-    if(state->auto_rotate) {
-        char axis = 'X' + state->rotate_axis; // 'X', 'Y', or 'Z' based on rotate_axis value
-        char auto_text[16];
-        snprintf(auto_text, sizeof(auto_text), "AUTO-%c Teapot", axis);
-        canvas_draw_str(canvas, 2, 62, auto_text);
+    // Only show stats and controls when not on title screen
+    if(!state->show_title_screen) {
+        // Always display the controls text
+        canvas_set_color(canvas, ColorBlack);
+        canvas_set_font(canvas, FontPrimary);
+        if(state->auto_rotate) {
+            char axis = 'X' + state->rotate_axis; // 'X', 'Y', or 'Z' based on rotate_axis value
+            char auto_text[16];
+            snprintf(auto_text, sizeof(auto_text), "AUTO-%c Teapot", axis);
+            canvas_draw_str(canvas, 2, 62, auto_text);
+        } else {
+            canvas_draw_str(canvas, 2, 62, "Smol Teapot");
+        }
+        
+        // Display FPS and polygon count in the corner
+        char stats_text[24];
+        snprintf(stats_text, sizeof(stats_text), "FPS:%lu  POLY:%lu", state->fps, state->polygons_drawn);
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, 1, 1, 80, 10);  // Background for better visibility
+        canvas_set_color(canvas, ColorBlack);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 9, stats_text);
     } else {
-        canvas_draw_str(canvas, 2, 62, "Smol Teapot");
+        canvas_draw_icon(canvas, 0, 0, &I_title);
+        // If we're showing title screen, display actual text on top of our buffer drawing
+        canvas_set_font(canvas, FontPrimary);
+        canvas_set_color(canvas, ColorWhite);
+        
+        // Draw "UTAH TEAPOT" text at top center
+        canvas_draw_str_aligned(canvas, 64, 4, AlignCenter, AlignTop, "UTAH TEAPOT");
+        canvas_set_color(canvas, ColorBlack);
+        canvas_set_font(canvas, FontSecondary);
+
+        // Draw "Press any button" at bottom
+        canvas_draw_str_aligned(canvas, 64, 56, AlignCenter, AlignCenter, "Press any button");
     }
-    
-    // Display FPS and polygon count in the corner
-    char stats_text[24];
-    snprintf(stats_text, sizeof(stats_text), "FPS:%lu  POLY:%lu", state->fps, state->polygons_drawn);
-    canvas_set_color(canvas, ColorWhite);
-    canvas_draw_box(canvas, 1, 1, 80, 10);  // Background for better visibility
-    canvas_set_color(canvas, ColorBlack);
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 9, stats_text);
     
     furi_mutex_release(state->mutex);
 }
@@ -239,6 +256,65 @@ static void subtract_vectors(Vec3f* v1, Vec3f* v2, Vec3f* result) {
     result->x = v1->x - v2->x;
     result->y = v1->y - v2->y;
     result->z = v1->z - v2->z;
+}
+
+// Render title screen to buffer
+static void render_title_screen() {
+    // Clear buffer before rendering
+    clear_render_buffer();
+    
+    // Draw a teapot shape as a border (simplified outline)
+    // Top of teapot
+    buffer_draw_line(30, 15, 98, 15); 
+    buffer_draw_line(30, 15, 25, 25);
+    buffer_draw_line(98, 15, 103, 25);
+    
+    // Teapot body outline
+    buffer_draw_line(25, 25, 20, 40);
+    buffer_draw_line(103, 25, 108, 40);
+    buffer_draw_line(20, 40, 108, 40);
+    
+    // Spout
+    buffer_draw_line(20, 30, 10, 35);
+    buffer_draw_line(10, 35, 20, 40);
+    
+    // Handle
+    buffer_draw_line(108, 30, 118, 32);
+    buffer_draw_line(118, 32, 108, 40);
+    
+    // Draw "UTAH TEAPOT" text at top center
+    // (We can't draw text directly to the buffer, we'll use lines to create some basic text)
+    // U
+    buffer_draw_line(36, 22, 36, 30);
+    buffer_draw_line(36, 30, 44, 30);
+    buffer_draw_line(44, 30, 44, 22);
+    
+    // T
+    buffer_draw_line(48, 22, 56, 22);
+    buffer_draw_line(52, 22, 52, 30);
+    
+    // A
+    buffer_draw_line(58, 30, 61, 22);
+    buffer_draw_line(61, 22, 64, 30);
+    buffer_draw_line(59, 26, 63, 26);
+    
+    // H
+    buffer_draw_line(66, 22, 66, 30);
+    buffer_draw_line(66, 26, 72, 26);
+    buffer_draw_line(72, 22, 72, 30);
+    
+    // Draw "Press any button" at bottom
+    // Draw a box with text inside
+    buffer_draw_line(25, 48, 103, 48);
+    buffer_draw_line(25, 48, 25, 56);
+    buffer_draw_line(25, 56, 103, 56);
+    buffer_draw_line(103, 48, 103, 56);
+    
+    // Use some simple lines to indicate text inside (can't draw actual text to buffer)
+    buffer_draw_line(35, 52, 95, 52);
+    buffer_draw_line(40, 52, 40, 54);
+    buffer_draw_line(90, 52, 90, 54);
+    buffer_draw_line(35, 54, 95, 54);
 }
 
 static void render_complete_model(TeapotState* state) {
@@ -390,6 +466,7 @@ int32_t p1x_smol_teapot_app(void* p) {
     state->auto_rotate = false;
     state->auto_rotate_speed = 0.05f;  // Auto-rotation speed
     state->rotate_axis = 0;  // Start with X axis rotation
+    state->show_title_screen = true;  // Start with title screen
     
     // Initialize render buffer
     init_render_buffer();
@@ -410,25 +487,10 @@ int32_t p1x_smol_teapot_app(void* p) {
     render_needed = true;
     render_complete = false;
     
-    // Force multiple initial renders with slight rotations to ensure the entire model is drawn
-    // This helps prevent the issue of partial rendering at startup
-    for(int i = 0; i < 5; i++) {
-        rotation.y = i * 0.1f; // Slight rotation to ensure different faces are drawn
-        render_complete_model(state);
-        view_port_update(view_port);
-        furi_delay_ms(20); // Short delay between frames
-    }
-    
-    // Reset rotation to initial position
-    rotation.x = 0;
-    rotation.y = 0;
-    rotation.z = 0;
-    render_needed = true;
-    
-    // Final render to ensure model is complete
-    render_complete_model(state);
+    // Render the title screen first
+    render_title_screen();
     view_port_update(view_port);
-    
+
     // Handle events
     InputEvent event;
     bool running = true;
@@ -441,56 +503,89 @@ int32_t p1x_smol_teapot_app(void* p) {
         
         if(event_status == FuriStatusOk) {
             if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
-                // Process key presses and long presses
-                if(event.type == InputTypePress || event.type == InputTypeRepeat) {
-                    switch(event.key) {
-                        case InputKeyUp:
-                            rotation.x += 0.25f;
-                            render_needed = true;
-                            break;
-                        case InputKeyDown:
-                            rotation.x -= 0.25f;
-                            render_needed = true;
-                            break;
-                        case InputKeyLeft:
-                            rotation.y -= 0.25f;
-                            render_needed = true;
-                            break;
-                        case InputKeyRight:
-                            rotation.y += 0.25f;
-                            render_needed = true;
-                            break;
-                        case InputKeyOk:
-                            if(state->auto_rotate) {
-                                // In auto-rotate mode, OK cycles through rotation axes
-                                state->rotate_axis = (state->rotate_axis + 1) % 3; // Cycle through 0,1,2
-                                FURI_LOG_I("P1X_SMOL_TEAPOT", "Auto-rotation axis: %c", 'X' + state->rotate_axis);
-                                render_needed = true;
-                            } else {
-                                // Normal mode - reset rotation
-                                rotation.x = 0;
-                                rotation.y = 0;
-                                rotation.z = 0;
-                                render_needed = true;
-                            }
-                            break;
-                        case InputKeyBack:
-                            running = false;
-                            break;
-                        default:
-                            break;
+                // Check if we're in title screen mode
+                if(state->show_title_screen) {
+                    // Any button press exits title screen and starts the teapot renderer
+                    if(event.type == InputTypePress) {
+                        state->show_title_screen = false;
+                        FURI_LOG_I("P1X_SMOL_TEAPOT", "Exiting title screen");
+                        
+                        // Initialize the 3D renderer
+                        rotation.x = 0;
+                        rotation.y = 0;
+                        rotation.z = 0;
+                        render_needed = true;
+                        
+                        // Force multiple initial renders with slight rotations to ensure the entire model is drawn
+                        for(int i = 0; i < 5; i++) {
+                            rotation.y = i * 0.1f; // Slight rotation to ensure different faces are drawn
+                            render_complete_model(state);
+                            view_port_update(view_port);
+                            furi_delay_ms(20); // Short delay between frames
+                        }
+                        
+                        // Reset rotation to initial position
+                        rotation.x = 0;
+                        rotation.y = 0;
+                        rotation.z = 0;
+                        render_needed = true;
+                        
+                        // Final render to ensure model is complete
+                        render_complete_model(state);
+                        view_port_update(view_port);
                     }
-                } else if(event.type == InputTypeLong) {
-                    // Long press handling
-                    switch(event.key) {
-                        case InputKeyOk:
-                            // Toggle auto-rotation mode
-                            state->auto_rotate = !state->auto_rotate;
-                            FURI_LOG_I("P1X_SMOL_TEAPOT", "Auto-rotation: %s", state->auto_rotate ? "ON" : "OFF");
-                            render_needed = true;
-                            break;
-                        default:
-                            break;
+                } else {
+                    // Process key presses and long presses for the teapot scene
+                    if(event.type == InputTypePress || event.type == InputTypeRepeat) {
+                        switch(event.key) {
+                            case InputKeyUp:
+                                rotation.x += 0.25f;
+                                render_needed = true;
+                                break;
+                            case InputKeyDown:
+                                rotation.x -= 0.25f;
+                                render_needed = true;
+                                break;
+                            case InputKeyLeft:
+                                rotation.y -= 0.25f;
+                                render_needed = true;
+                                break;
+                            case InputKeyRight:
+                                rotation.y += 0.25f;
+                                render_needed = true;
+                                break;
+                            case InputKeyOk:
+                                if(state->auto_rotate) {
+                                    // In auto-rotate mode, OK cycles through rotation axes
+                                    state->rotate_axis = (state->rotate_axis + 1) % 3; // Cycle through 0,1,2
+                                    FURI_LOG_I("P1X_SMOL_TEAPOT", "Auto-rotation axis: %c", 'X' + state->rotate_axis);
+                                    render_needed = true;
+                                } else {
+                                    // Normal mode - reset rotation
+                                    rotation.x = 0;
+                                    rotation.y = 0;
+                                    rotation.z = 0;
+                                    render_needed = true;
+                                }
+                                break;
+                            case InputKeyBack:
+                                running = false;
+                                break;
+                            default:
+                                break;
+                        }
+                    } else if(event.type == InputTypeLong) {
+                        // Long press handling
+                        switch(event.key) {
+                            case InputKeyOk:
+                                // Toggle auto-rotation mode
+                                state->auto_rotate = !state->auto_rotate;
+                                FURI_LOG_I("P1X_SMOL_TEAPOT", "Auto-rotation: %s", state->auto_rotate ? "ON" : "OFF");
+                                render_needed = true;
+                                break;
+                            default:
+                                break;
+                        }
                     }
                 }
                 
@@ -498,54 +593,58 @@ int32_t p1x_smol_teapot_app(void* p) {
             }
         }
         
-        // Update auto-rotation if enabled
-        uint32_t current_time = furi_get_tick();
-        if(state->auto_rotate && (current_time - last_auto_rotate_update >= 30)) { // Update at ~33fps
-            if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
-                // Apply rotation to the selected axis
-                if(state->rotate_axis == 0) {
-                    rotation.x += state->auto_rotate_speed;
-                } else if(state->rotate_axis == 1) {
-                    rotation.y += state->auto_rotate_speed;
-                } else if(state->rotate_axis == 2) {
-                    rotation.z += state->auto_rotate_speed;
-                }
-                render_needed = true;
-                last_auto_rotate_update = current_time;
-                furi_mutex_release(state->mutex);
-            }
-        }
-        
-        // Force a periodic re-render even without user input
-        // This ensures the model stays fully rendered
-        if(current_time - last_auto_render > 1000) {
-            render_needed = true;
-            last_auto_render = current_time;
-        }
-        
-        // Check if we need to render a new frame
-        if(render_needed) {
-            // Render in our own buffer
-            render_complete_model(state);
+        // Only handle auto-rotation and rendering for teapot scene
+        if(!state->show_title_screen) {
+            uint32_t current_time = furi_get_tick();
             
-            // Update frame count for FPS calculation
-            state->frame_count++;
-            
-            // Calculate FPS every second
-            uint32_t elapsed_time = current_time - state->last_frame_time;
-            
-            // Update FPS every second (1000ms)
-            if(elapsed_time >= 1000) {
+            // Update auto-rotation if enabled
+            if(state->auto_rotate && (current_time - last_auto_rotate_update >= 30)) { // Update at ~33fps
                 if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
-                    state->fps = (state->frame_count * 1000) / elapsed_time;
-                    state->frame_count = 0;
-                    state->last_frame_time = current_time;
+                    // Apply rotation to the selected axis
+                    if(state->rotate_axis == 0) {
+                        rotation.x += state->auto_rotate_speed;
+                    } else if(state->rotate_axis == 1) {
+                        rotation.y += state->auto_rotate_speed;
+                    } else if(state->rotate_axis == 2) {
+                        rotation.z += state->auto_rotate_speed;
+                    }
+                    render_needed = true;
+                    last_auto_rotate_update = current_time;
                     furi_mutex_release(state->mutex);
                 }
             }
             
-            // Update the display once per full model render
-            view_port_update(view_port);
+            // Force a periodic re-render even without user input
+            // This ensures the model stays fully rendered
+            if(current_time - last_auto_render > 1000) {
+                render_needed = true;
+                last_auto_render = current_time;
+            }
+            
+            // Check if we need to render a new frame
+            if(render_needed) {
+                // Render in our own buffer
+                render_complete_model(state);
+                
+                // Update frame count for FPS calculation
+                state->frame_count++;
+                
+                // Calculate FPS every second
+                uint32_t elapsed_time = current_time - state->last_frame_time;
+                
+                // Update FPS every second (1000ms)
+                if(elapsed_time >= 1000) {
+                    if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
+                        state->fps = (state->frame_count * 1000) / elapsed_time;
+                        state->frame_count = 0;
+                        state->last_frame_time = current_time;
+                        furi_mutex_release(state->mutex);
+                    }
+                }
+                
+                // Update the display once per full model render
+                view_port_update(view_port);
+            }
         }
         
         // Simple frame delay
