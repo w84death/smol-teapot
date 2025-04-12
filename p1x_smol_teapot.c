@@ -9,7 +9,7 @@
 #include <p1x_smol_teapot_icons.h>
 
 /* include triangulated teapot model */
-#include "teapot.h"
+#include "teapot_decimated.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64

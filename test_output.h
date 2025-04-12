@@ -1,5 +1,5 @@
-#ifndef TEAPOT_DECIMATED_H
-#define TEAPOT_DECIMATED_H
+#ifndef TEST_OUTPUT_H
+#define TEST_OUTPUT_H
 
 #define TEAPOT_TRIANGLE_COUNT 347 // Updated count from /Code/smol-teapot/teapot_smol.obj
 
@@ -703,4 +703,4 @@ static const float teapot_triangles[] = {
     -0.377047f, 0.751855f, 1.999724f, 0.081776f, 0.438938f, 1.949718f, 0.733810f, 0.700094f, 1.897039f,
 };
 
-#endif // TEAPOT_DECIMATED_H
+#endif // TEST_OUTPUT_H
