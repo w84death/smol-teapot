@@ -1,18 +1,13 @@
 # Smol Teapot for Flipper Zero
 
-![Smol Teapot](p1x_smol_teapot.png)
-
-## Screenshots
-
-### Title Screen
 ![Title Screen](media/titlescreen.png)
-
-### 3D Rendering
-![3D Rendering](media/render.png)
 
 ## Overview
 
 Smol Teapot is a 3D wireframe renderer for the Flipper Zero that displays the classic Utah Teapot model. This application demonstrates real-time 3D graphics capabilities on the Flipper Zero's 128x64 monochrome display.
+
+
+![3D Rendering](media/render.png)
 
 ## Features
 
