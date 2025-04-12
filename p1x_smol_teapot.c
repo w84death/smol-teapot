@@ -136,14 +136,13 @@ static void render_callback(Canvas* canvas, void* ctx) {
     if(!state->show_title_screen) {
         // Always display the controls text
         canvas_set_color(canvas, ColorBlack);
-        canvas_set_font(canvas, FontPrimary);
         if(state->auto_rotate) {
             char axis = 'X' + state->rotate_axis; // 'X', 'Y', or 'Z' based on rotate_axis value
             char auto_text[16];
             snprintf(auto_text, sizeof(auto_text), "AUTO-%c Teapot", axis);
             canvas_draw_str(canvas, 2, 62, auto_text);
         } else {
-            canvas_draw_str(canvas, 2, 62, "Smol Teapot");
+            canvas_draw_str(canvas, 2, 62, "Long press for auto-rotate");
         }
         
         // Display FPS and polygon count in the corner
