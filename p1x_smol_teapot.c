@@ -14,7 +14,7 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define PROJECTION_DISTANCE 140
-#define FRAME_DELAY 50
+#define FRAME_DELAY 33
 
 // Model bounds to find center
 #define MODEL_MIN_X -3.0f
@@ -56,8 +56,17 @@ typedef struct {
 
 static RenderBuffer render_buffer = {0};
 
+// App state
+typedef struct {
+    FuriMutex* mutex;
+    uint32_t fps;
+    uint32_t polygons_drawn;
+    uint32_t frame_count;
+    uint32_t last_frame_time;
+} TeapotState;
+
 // Function prototypes
-static void render_complete_model(void);
+static void render_complete_model(TeapotState* state);
 static void init_identity_matrix(Matrix4x4* m);
 static void rotate_x_matrix(Matrix4x4* m, float angle);
 static void rotate_y_matrix(Matrix4x4* m, float angle);
@@ -66,11 +75,6 @@ static void multiply_matrix_vector(Matrix4x4* m, Vec3f* in, Vec3f* out);
 static float dot_product(Vec3f* v1, Vec3f* v2);
 static void cross_product(Vec3f* v1, Vec3f* v2, Vec3f* result);
 static void subtract_vectors(Vec3f* v1, Vec3f* v2, Vec3f* result);
-
-// App state
-typedef struct {
-    FuriMutex* mutex;
-} TeapotState;
 
 // Draw pixel to our buffer
 static void buffer_draw_pixel(uint8_t x, uint8_t y) {
@@ -126,8 +130,17 @@ static void render_callback(Canvas* canvas, void* ctx) {
     
     // Always display the controls text
     canvas_set_color(canvas, ColorBlack);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 62, "Smol Teapot");
+    
+    // Display FPS and polygon count in the corner
+    char stats_text[24];
+    snprintf(stats_text, sizeof(stats_text), "FPS:%lu  POLY:%lu", state->fps, state->polygons_drawn);
+    canvas_set_color(canvas, ColorWhite);
+    canvas_draw_box(canvas, 1, 1, 80, 10);  // Background for better visibility
+    canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 62, "Smol Teapot 3D");
+    canvas_draw_str(canvas, 2, 9, stats_text);
     
     furi_mutex_release(state->mutex);
 }
@@ -218,9 +231,12 @@ static void subtract_vectors(Vec3f* v1, Vec3f* v2, Vec3f* result) {
     result->z = v1->z - v2->z;
 }
 
-static void render_complete_model() {
+static void render_complete_model(TeapotState* state) {
     // Clear buffer before new render
     clear_render_buffer();
+    
+    // Reset polygon count
+    state->polygons_drawn = 0;
     
     // Create rotation matrices
     Matrix4x4 rot_x_matrix, rot_y_matrix, rot_z_matrix;
@@ -332,6 +348,9 @@ static void render_complete_model() {
             buffer_draw_line(x1, y1, x2, y2);
             buffer_draw_line(x2, y2, x3, y3);
             buffer_draw_line(x3, y3, x1, y1);
+            
+            // Increment polygon count
+            state->polygons_drawn++;
         }
     }
     
@@ -353,6 +372,10 @@ int32_t p1x_smol_teapot_app(void* p) {
     // Set up state
     TeapotState* state = malloc(sizeof(TeapotState));
     state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    state->fps = 0;
+    state->polygons_drawn = 0;
+    state->frame_count = 0;
+    state->last_frame_time = furi_get_tick();
     
     // Initialize render buffer
     init_render_buffer();
@@ -374,7 +397,7 @@ int32_t p1x_smol_teapot_app(void* p) {
     render_complete = false;
     
     // First render of the model
-    render_complete_model();
+    render_complete_model(state);
     
     // Handle events
     InputEvent event;
@@ -426,13 +449,30 @@ int32_t p1x_smol_teapot_app(void* p) {
         // Check if we need to render a new frame
         if(render_needed) {
             // Render in our own buffer
-            render_complete_model();
+            render_complete_model(state);
+            
+            // Update frame count for FPS calculation
+            state->frame_count++;
+            
+            // Calculate FPS every second
+            uint32_t current_time = furi_get_tick();
+            uint32_t elapsed_time = current_time - state->last_frame_time;
+            
+            // Update FPS every second (1000ms)
+            if(elapsed_time >= 1000) {
+                if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
+                    state->fps = (state->frame_count * 1000) / elapsed_time;
+                    state->frame_count = 0;
+                    state->last_frame_time = current_time;
+                    furi_mutex_release(state->mutex);
+                }
+            }
             
             // Update the display once per full model render
             view_port_update(view_port);
         }
         
-        // Simple frame delay
+        // Simple frame delay to keep the engine running at a reasonable speed
         furi_delay_ms(FRAME_DELAY);
     }
     

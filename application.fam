@@ -2,11 +2,11 @@
 
 App(
     appid="p1x_smol_teapot",  # Must be unique
-    name="App p1x_smol_teapot",  # Displayed in menus
+    name="Smol Teapot",  # Displayed in menus
     apptype=FlipperAppType.EXTERNAL,
     entry_point="p1x_smol_teapot_app",
     stack_size=4 * 1024,
-    fap_category="Examples",
+    fap_category="P1X",
     # Optional values
     # fap_version="0.1",
     fap_icon="p1x_smol_teapot.png",  # 10x10 1-bit PNG
