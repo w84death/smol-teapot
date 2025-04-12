@@ -63,6 +63,9 @@ typedef struct {
     uint32_t polygons_drawn;
     uint32_t frame_count;
     uint32_t last_frame_time;
+    bool auto_rotate;    // Flag to enable auto-rotation
+    float auto_rotate_speed;  // Speed of auto-rotation
+    uint8_t rotate_axis;     // 0=X, 1=Y, 2=Z
 } TeapotState;
 
 // Function prototypes
@@ -131,7 +134,14 @@ static void render_callback(Canvas* canvas, void* ctx) {
     // Always display the controls text
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 2, 62, "Smol Teapot");
+    if(state->auto_rotate) {
+        char axis = 'X' + state->rotate_axis; // 'X', 'Y', or 'Z' based on rotate_axis value
+        char auto_text[16];
+        snprintf(auto_text, sizeof(auto_text), "AUTO-%c Teapot", axis);
+        canvas_draw_str(canvas, 2, 62, auto_text);
+    } else {
+        canvas_draw_str(canvas, 2, 62, "Smol Teapot");
+    }
     
     // Display FPS and polygon count in the corner
     char stats_text[24];
@@ -285,31 +295,32 @@ static void render_complete_model(TeapotState* state) {
         
         // Transform vertices
         Vec3f tv1, tv2, tv3;
-        Vec3f temp;
+        Vec3f temp1, temp2;
         
-        // Apply rotation matrices to v1
-        multiply_matrix_vector(&rot_x_matrix, &v1, &temp);
-        multiply_matrix_vector(&rot_y_matrix, &temp, &temp);
-        multiply_matrix_vector(&rot_z_matrix, &temp, &temp);
-        tv1.x = temp.x * scale + position.x;
-        tv1.y = temp.y * scale + position.y;
-        tv1.z = temp.z * scale + position.z;
+        // Apply rotation matrices to v1 - Note: order is important for proper 3D perspective!
+        // X and Y rotations first, then Z rotation
+        multiply_matrix_vector(&rot_x_matrix, &v1, &temp1);
+        multiply_matrix_vector(&rot_y_matrix, &temp1, &temp2);
+        multiply_matrix_vector(&rot_z_matrix, &temp2, &temp1);
+        tv1.x = temp1.x * scale + position.x;
+        tv1.y = temp1.y * scale + position.y;
+        tv1.z = temp1.z * scale + position.z;
         
         // Apply rotation matrices to v2
-        multiply_matrix_vector(&rot_x_matrix, &v2, &temp);
-        multiply_matrix_vector(&rot_y_matrix, &temp, &temp);
-        multiply_matrix_vector(&rot_z_matrix, &temp, &temp);
-        tv2.x = temp.x * scale + position.x;
-        tv2.y = temp.y * scale + position.y;
-        tv2.z = temp.z * scale + position.z;
+        multiply_matrix_vector(&rot_x_matrix, &v2, &temp1);
+        multiply_matrix_vector(&rot_y_matrix, &temp1, &temp2);
+        multiply_matrix_vector(&rot_z_matrix, &temp2, &temp1);
+        tv2.x = temp1.x * scale + position.x;
+        tv2.y = temp1.y * scale + position.y;
+        tv2.z = temp1.z * scale + position.z;
         
         // Apply rotation matrices to v3
-        multiply_matrix_vector(&rot_x_matrix, &v3, &temp);
-        multiply_matrix_vector(&rot_y_matrix, &temp, &temp);
-        multiply_matrix_vector(&rot_z_matrix, &temp, &temp);
-        tv3.x = temp.x * scale + position.x;
-        tv3.y = temp.y * scale + position.y;
-        tv3.z = temp.z * scale + position.z;
+        multiply_matrix_vector(&rot_x_matrix, &v3, &temp1);
+        multiply_matrix_vector(&rot_y_matrix, &temp1, &temp2);
+        multiply_matrix_vector(&rot_z_matrix, &temp2, &temp1);
+        tv3.x = temp1.x * scale + position.x;
+        tv3.y = temp1.y * scale + position.y;
+        tv3.z = temp1.z * scale + position.z;
         
         // Skip triangles with vertices too close to camera
         if(tv1.z < 1.0f || tv2.z < 1.0f || tv3.z < 1.0f) {
@@ -376,6 +387,9 @@ int32_t p1x_smol_teapot_app(void* p) {
     state->polygons_drawn = 0;
     state->frame_count = 0;
     state->last_frame_time = furi_get_tick();
+    state->auto_rotate = false;
+    state->auto_rotate_speed = 0.05f;  // Auto-rotation speed
+    state->rotate_axis = 0;  // Start with X axis rotation
     
     // Initialize render buffer
     init_render_buffer();
@@ -396,12 +410,30 @@ int32_t p1x_smol_teapot_app(void* p) {
     render_needed = true;
     render_complete = false;
     
-    // First render of the model
+    // Force multiple initial renders with slight rotations to ensure the entire model is drawn
+    // This helps prevent the issue of partial rendering at startup
+    for(int i = 0; i < 5; i++) {
+        rotation.y = i * 0.1f; // Slight rotation to ensure different faces are drawn
+        render_complete_model(state);
+        view_port_update(view_port);
+        furi_delay_ms(20); // Short delay between frames
+    }
+    
+    // Reset rotation to initial position
+    rotation.x = 0;
+    rotation.y = 0;
+    rotation.z = 0;
+    render_needed = true;
+    
+    // Final render to ensure model is complete
     render_complete_model(state);
+    view_port_update(view_port);
     
     // Handle events
     InputEvent event;
     bool running = true;
+    uint32_t last_auto_render = furi_get_tick();
+    uint32_t last_auto_rotate_update = furi_get_tick();
     
     while(running) {
         // Process input with timeout (non-blocking)
@@ -409,7 +441,7 @@ int32_t p1x_smol_teapot_app(void* p) {
         
         if(event_status == FuriStatusOk) {
             if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
-                // Process key presses
+                // Process key presses and long presses
                 if(event.type == InputTypePress || event.type == InputTypeRepeat) {
                     switch(event.key) {
                         case InputKeyUp:
@@ -429,13 +461,33 @@ int32_t p1x_smol_teapot_app(void* p) {
                             render_needed = true;
                             break;
                         case InputKeyOk:
-                            rotation.x = 0;
-                            rotation.y = 0;
-                            rotation.z = 0;
-                            render_needed = true;
+                            if(state->auto_rotate) {
+                                // In auto-rotate mode, OK cycles through rotation axes
+                                state->rotate_axis = (state->rotate_axis + 1) % 3; // Cycle through 0,1,2
+                                FURI_LOG_I("P1X_SMOL_TEAPOT", "Auto-rotation axis: %c", 'X' + state->rotate_axis);
+                                render_needed = true;
+                            } else {
+                                // Normal mode - reset rotation
+                                rotation.x = 0;
+                                rotation.y = 0;
+                                rotation.z = 0;
+                                render_needed = true;
+                            }
                             break;
                         case InputKeyBack:
                             running = false;
+                            break;
+                        default:
+                            break;
+                    }
+                } else if(event.type == InputTypeLong) {
+                    // Long press handling
+                    switch(event.key) {
+                        case InputKeyOk:
+                            // Toggle auto-rotation mode
+                            state->auto_rotate = !state->auto_rotate;
+                            FURI_LOG_I("P1X_SMOL_TEAPOT", "Auto-rotation: %s", state->auto_rotate ? "ON" : "OFF");
+                            render_needed = true;
                             break;
                         default:
                             break;
@@ -444,6 +496,31 @@ int32_t p1x_smol_teapot_app(void* p) {
                 
                 furi_mutex_release(state->mutex);
             }
+        }
+        
+        // Update auto-rotation if enabled
+        uint32_t current_time = furi_get_tick();
+        if(state->auto_rotate && (current_time - last_auto_rotate_update >= 30)) { // Update at ~33fps
+            if(furi_mutex_acquire(state->mutex, 100) == FuriStatusOk) {
+                // Apply rotation to the selected axis
+                if(state->rotate_axis == 0) {
+                    rotation.x += state->auto_rotate_speed;
+                } else if(state->rotate_axis == 1) {
+                    rotation.y += state->auto_rotate_speed;
+                } else if(state->rotate_axis == 2) {
+                    rotation.z += state->auto_rotate_speed;
+                }
+                render_needed = true;
+                last_auto_rotate_update = current_time;
+                furi_mutex_release(state->mutex);
+            }
+        }
+        
+        // Force a periodic re-render even without user input
+        // This ensures the model stays fully rendered
+        if(current_time - last_auto_render > 1000) {
+            render_needed = true;
+            last_auto_render = current_time;
         }
         
         // Check if we need to render a new frame
@@ -455,7 +532,6 @@ int32_t p1x_smol_teapot_app(void* p) {
             state->frame_count++;
             
             // Calculate FPS every second
-            uint32_t current_time = furi_get_tick();
             uint32_t elapsed_time = current_time - state->last_frame_time;
             
             // Update FPS every second (1000ms)
@@ -472,7 +548,7 @@ int32_t p1x_smol_teapot_app(void* p) {
             view_port_update(view_port);
         }
         
-        // Simple frame delay to keep the engine running at a reasonable speed
+        // Simple frame delay
         furi_delay_ms(FRAME_DELAY);
     }
     
